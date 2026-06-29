@@ -299,11 +299,16 @@ public:
   /// Default initial data
   void initialDataDefault();
 
+  /// Initial data for moving frame Rayleigh-Benard
+  void initialDataMFRB();
+
   /// Initial data for burgers problem
   void initialDataBurgers();
 
   /// Initial data for problem to test refluxing
   void initialDataRefluxTest();
+
+  void initialDataMRB();
 
   /// Whether or not we're loading advection velocities
   bool loadAdvVel() { return m_opt.load_advVel; }
