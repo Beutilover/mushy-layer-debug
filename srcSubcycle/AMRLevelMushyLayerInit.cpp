@@ -3,9 +3,44 @@
 #include "analyticSolns.H"
 #include "computeSum.H"
 #include <ctime>
+#include <cmath>
 /**
  * This source file contains methods for initialising and defining objects
  */
+
+static Real NewtonsolvebgMRB(Real x,
+                             Real F, 
+                             Real y0, 
+                             Real B,  
+                             Real C, 
+                             Real k) 
+{
+    Real y = y0 + F*x;
+    Real ymax = C/k - 1e-12;
+    if (y > ymax) y = ymax;
+
+    Real denom0 = C-k*y0; 
+
+    for (int iter = 0; iter<15; iter++)
+    {
+        Real denom = C - k*y;
+        
+        Real G = 
+            y - y0
+            + B*log(denom/denom0)
+            - F*x;
+  
+        Real dG = 
+            1.0 - (B*k)/denom;
+  
+        y -= G/dG;
+        
+        if (y > ymax) y = ymax;
+    }
+
+    return y;
+}
+
 
 void AMRLevelMushyLayer::setDefaults()
 {
@@ -1230,6 +1265,83 @@ void AMRLevelMushyLayer::initialDataLens()
 
 }
 
+void AMRLevelMushyLayer::initialDataMRB()
+{
+
+  Real Cb = m_parameters.bcValBulkConcentrationLo[SpaceDim - 1];
+  Real Cratio = m_parameters.compositionRatio;
+  Real ps = m_parameters.waterDistributionCoeff;
+  Real k = m_parameters.heatConductivityRatio;
+
+  Real C = Cratio;
+  Real slope = 1-ps;
+  Real B = (k-1)/(k-ps)*(Cb+Cratio/(1-ps));
+  Real y0 = 1;
+  Real F = 0 - 1 + B*log((C- slope*0.9)/(C- slope*1));
+
+  Real St = m_parameters.stefan;
+  Real cp = m_parameters.specificHeatRatio;
+  
+  Real perturb_amp = 1e-3;
+  DataIterator dit = m_grids.dataIterator();
+  for (dit.reset(); dit.ok(); ++dit)
+  {
+    BoxIterator bit((*m_scalarNew[0])[dit].box());
+    for (bit.reset(); bit.ok(); ++bit)
+    {
+      IntVect iv = bit();
+   
+      RealVect loc;
+      getLocation(iv, loc, m_dx);
+      
+      Real znow = loc[1];
+      Real xnow = loc[0];
+      Real thetanow = NewtonsolvebgMRB(znow, F, y0, B, C, slope);
+
+      Real chinow = (Cratio + ps*thetanow + Cb)/(Cratio + ps*thetanow - thetanow);
+      Real pertnow = perturb_amp*sin(4*M_PI*xnow)*(0.1996*sin(M_PI*znow) + 0.3315*sin(2*M_PI*znow) + 0.3901*sin(3*M_PI*znow) + 0.3907*sin(4*M_PI*znow));
+      (*m_scalarNew[ScalarVars::m_enthalpy])[dit](iv) = St*chinow + (chinow + (1-cp)*chinow)*thetanow + pertnow;
+      (*m_scalarNew[ScalarVars::m_bulkConcentration])[dit](iv) = Cb;
+      (*m_scalarNew[ScalarVars::m_temperature])[dit](iv) = thetanow;
+      (*m_scalarNew[ScalarVars::m_liquidConcentration])[dit](iv) = -thetanow;
+      (*m_scalarNew[ScalarVars::m_porosity])[dit](iv) = chinow;
+    }
+  }
+}
+
+void AMRLevelMushyLayer::initialDataMFRB()
+{
+  Real VF = m_parameters.nonDimVel;
+  Real thetad = 2.1;
+  Real thetau = 1.1;
+  Real St = m_parameters.stefan;
+
+  DataIterator dit = m_grids.dataIterator();
+  for (dit.reset(); dit.ok(); ++dit)
+  {
+    BoxIterator bit((*m_scalarNew[0])[dit].box());
+    for (bit.reset(); bit.ok(); ++bit)
+    {
+      IntVect iv = bit();
+   
+      RealVect loc;
+      getLocation(iv, loc, m_dx);
+      
+      Real znow = loc[1];
+      Real xnow = loc[0];
+      Real thetanow = ((std::exp(VF)*thetad - thetau) - (thetad-thetau)*std::exp(VF*znow))/(std::exp(VF) - 1);
+
+      Real pertnow = 0.001*sin(4.86*xnow)*(sin(M_PI*znow));
+      (*m_scalarNew[ScalarVars::m_enthalpy])[dit](iv) = St*1 + thetanow + pertnow;
+      //(*m_scalarNew[ScalarVars::m_temperature])[dit](iv) = thetanow + pertnow;
+      (*m_scalarNew[ScalarVars::m_porosity])[dit](iv) = 1;
+      (*m_scalarNew[ScalarVars::m_bulkConcentration])[dit](iv) = -1;
+      (*m_scalarNew[ScalarVars::m_liquidConcentration])[dit](iv) = -1;
+    }
+  }
+
+}
+
 void AMRLevelMushyLayer::initialDataSidewallHeating()
 {
   // heating in x direction, i.e. left/right walls;
@@ -2138,6 +2250,12 @@ void AMRLevelMushyLayer::initialData()
       break;
     case 2:
       initialDataLens();
+      break;
+    case 3:
+      initialDataMRB();
+      break;
+    case 4:
+      initialDataMFRB();
       break;
     default:
       initialDataDefault();
