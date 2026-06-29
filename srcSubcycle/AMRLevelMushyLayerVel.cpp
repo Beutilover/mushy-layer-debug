@@ -486,7 +486,7 @@ void AMRLevelMushyLayer::computeAdvectionVelocities(
     traceAdvectionVel(m_advVel, ccAdvVel, U_to_advect, advectionSourceTerm,
                       m_patchGodVelocity, old_time, half_dt * 2);
 
-    //      m_advVel.exchange();
+    //m_advVel.exchange();// This line is newly added because we modify the traceAdvectionVel(), maybe not useful
 
     EdgeToCell(m_advVel, *m_vectorNew[VectorVars::m_advectionVel]);
     Real maxAdvU = ::computeNorm(*m_vectorNew[VectorVars::m_advectionVel],
@@ -1062,12 +1062,33 @@ void AMRLevelMushyLayer::computePredictedVelocities(
 
     // set up patchGodunov for this patch
     a_patchGodVelocity.setCurrentBox(gridBox);
-    advectionPhysics->setCellVelPtr(&thisOldVel);
-    advectionPhysics->setAdvVelPtr(&thisAdvVel);
+
+     //New code
+     // Make a temporary cell-centered old velocity with frame contribution.
+    // Add frame velocity directly to the patch-local face velocity.
+    // thisAdvVel already has the correct box/ghost layout for computeWHalf().
+    for (int idir = 0; idir < SpaceDim; ++idir)
+    {
+      thisAdvVel[idir].plus(m_frameAdvVel[dit()][idir]);
+    }
+ 
+     // Use the augmented velocities in the predictor.
+    advectionPhysics->setCellVelPtr(&thisOldVel);  // u^n
+    advectionPhysics->setAdvVelPtr(&thisAdvVel);        // adv vel + V_frame
+
+    //advectionPhysics->setCellVelPtr(&thisOldVel);
+    //advectionPhysics->setAdvVelPtr(&thisAdvVel);
 
     // compute face-centered variables using "Godunov Box"
     a_patchGodVelocity.computeWHalf(U_chi_predicted, U_chi_old, srcFab, a_dt,
                                     gridBox);
+
+    // change the definition back
+    for (int idir = 0; idir < SpaceDim; ++idir)
+    {
+      thisAdvVel[idir].minus(m_frameAdvVel[dit()][idir]);
+    }                            
+                                
 
     // Make sure U_chi_predicted is indeed U/chi
     if (m_opt.advectionMethod == m_porosityOutsideAdvection)
@@ -1526,6 +1547,13 @@ void AMRLevelMushyLayer::computeAdvectionVelSourceTerm(
   setVelZero(darcy, m_opt.advVelsrcChiLimit,
              2); // set to zero up to 2 cells from interface
 
+
+  //// Add the framework translation
+    //// Frame advection source term: (V_frame · grad(U))
+  LevelData<FArrayBox> VelFrame(m_grids, SpaceDim, m_numGhostAdvection * IntVect::Unit);
+  EdgeToCell(m_frameAdvVel, VelFrame);
+  VelFrame.exchange();
+
   for (dit.reset(); dit.ok(); ++dit)
   {
     a_src[dit].setVal(0.0);
@@ -1549,7 +1577,8 @@ void AMRLevelMushyLayer::computeAdvectionVelSourceTerm(
     {
       a_src[dit] -= darcy[dit];
     }
-
+    
+    //a_src[dit] -= frameSrc[dit];
   } // end dataiterator
 
   // Add in extra (u.grad(porosity)/porosity^2)u term if needed
@@ -1585,6 +1614,11 @@ void AMRLevelMushyLayer::computeAdvectionVelSourceTerm(
 
     LevelData<FArrayBox> extraSrc(m_grids, SpaceDim, IntVect::Unit);
 
+    LevelData<FArrayBox> extraSrcFrame(m_grids, SpaceDim, IntVect::Unit);
+
+    Gradient::levelGradientCC(extraSrcFrame, porosity, m_dx,
+                              extraSrc.ghostVect()[0]);
+
     for (DataIterator dit = extraSrc.dataIterator(); dit.ok(); ++dit)
     {
 
@@ -1607,6 +1641,25 @@ void AMRLevelMushyLayer::computeAdvectionVelSourceTerm(
 
       // Add this extra source term to the full source term
       a_src[dit].minus(extraSrc[dit], 0, 0, SpaceDim);
+    }
+
+    for (DataIterator dit = extraSrcFrame.dataIterator(); dit.ok(); ++dit)
+    {
+      for (int dir = 0; dir < SpaceDim; dir++)
+      {
+        // Make V.grad(porosity)
+        extraSrcFrame[dit].mult(VelFrame[dit], dir, dir);
+
+        // Make V.grad(porosity)/porosity^2
+        extraSrcFrame[dit].divide(porosity[dit], 0, dir);
+        extraSrcFrame[dit].divide(porosity[dit], 0, dir);
+
+        // Make (V.grad(porosity)/porosity^2)u
+        extraSrcFrame[dit].mult(velOld[dit], dir, dir);
+      }
+
+      // Add this extra source term to the full source term
+      a_src[dit].minus(extraSrcFrame[dit], 0, 0, SpaceDim);
     }
   }
 
@@ -1689,6 +1742,29 @@ void AMRLevelMushyLayer::computeUDelU(
       for (DataIterator dit = UdelU_porosity.dataIterator(); dit.ok(); ++dit)
       {
         UdelU_porosity[dit].mult(ccVel[dit]);
+      }
+
+      // Add frame term: V_frame · grad(U), where U is the physical velocity.
+      // This is separate from the existing U_ad · grad(U/chi) term above.
+      LevelData<FluxBox> U_oldold(m_grids, SpaceDim, IntVect::Unit);
+      LevelData<FArrayBox> frameGradU(m_grids, SpaceDim, IntVect::Unit);
+      LevelData<FArrayBox> frameVelCC(m_grids, SpaceDim, IntVect::Unit);
+
+      for (DataIterator dit = UdelU_porosity.dataIterator(); dit.ok(); ++dit)
+      {
+        U_oldold[dit].copy(m_advVel[dit]);
+      }
+      U_oldold.exchange();//Try it
+      m_advVel.exchange();//Try it
+      Gradient::levelGradientCC(frameGradU, U_oldold, m_dx);
+
+      for (DataIterator dit = frameGradU.dataIterator(); dit.ok(); ++dit)
+      {
+        frameVelCC[dit].setVal(0.0);
+        frameVelCC[dit].setVal(m_parameters.nonDimVel, SpaceDim - 1);
+
+        frameGradU[dit].mult(frameVelCC[dit]);
+        UdelU_porosity[dit].plus(frameGradU[dit]);
       }
 
       Real maxUdelU =
@@ -1818,6 +1894,7 @@ void AMRLevelMushyLayer::computeUstarSrc(
     }
     darcy_src[dit].mult(m_parameters.m_darcyCoeff);
   }
+
 
   // Put it all together
   for (dit.reset(); dit.ok(); ++dit)
@@ -1969,7 +2046,7 @@ void AMRLevelMushyLayer::predictVelocities(LevelData<FArrayBox> &a_uDelU,
                                UtoAdvect_old, a_src, m_patchGodVelocity,
                                grad_eLambda, gradPhi, pressureScale, old_time,
                                a_dt);
-
+    //a_advVel.exchange();No difference
     U_chi_advected.exchange();
 
     for (DataIterator dit = U_chi_advected.dataIterator(); dit.ok(); ++dit)
@@ -2022,6 +2099,62 @@ void AMRLevelMushyLayer::predictVelocities(LevelData<FArrayBox> &a_uDelU,
   if (m_opt.uDelUConservativeForm)
   {
     Divergence::levelDivergenceMACMultiComp(a_uDelU, momentumFlux, m_dx);
+
+    // Also need frame contribution
+    for (dit.reset(); dit.ok(); ++dit)
+    {
+      FluxBox &thisU_chiHalf = U_chi_advected[dit];
+      const Box &thisBox = levelGrids[dit];
+      FArrayBox &this_uDelU = a_uDelU[dit];
+      //New for frame velocity
+      // Make a patch-local copy of the advected quantity.
+      FluxBox U_half(thisBox, SpaceDim);
+      for (int dir = 0; dir < SpaceDim; ++dir)
+      {
+        U_half[dir].copy(thisU_chiHalf[dir], 0, 0, SpaceDim);
+      }
+
+      // For porosity-based advection methods, recover U from U/chi.
+      if (m_opt.advectionMethod == m_porosityOutsideAdvection ||
+          m_opt.advectionMethod == m_porosityInAdvection)
+      {
+        for (int velComp = 0; velComp < SpaceDim; velComp++)
+        {
+          for (int dir = 0; dir < SpaceDim; dir++)
+          {
+            FArrayBox &U_halfDir = U_half[dir];
+            FArrayBox &porosityDir = porosityFace[dit][dir];
+
+            U_halfDir.mult(porosityDir, 0, velComp, 1);
+          }
+        }
+      }
+    
+      // Cell-centered frame velocity, constant in the last component.
+      FArrayBox frameCellVel(thisBox, SpaceDim);
+      frameCellVel.setVal(0.0);
+      for (BoxIterator bit(frameCellVel.box()); bit.ok(); ++bit)
+      {
+        IntVect iv = bit();
+        frameCellVel(iv, SpaceDim - 1) = m_parameters.nonDimVel;
+      }
+
+      // Compute frame contribution in a temporary FArrayBox, then add it.
+      FArrayBox frame_uDelU(thisBox, SpaceDim);
+      frame_uDelU.setVal(0.0);
+      
+      for (int dir = 0; dir < SpaceDim; dir++)
+      {
+        FArrayBox &U_halfDir = U_half[dir];
+      
+        FORT_UDELS(CHF_FRA(frame_uDelU), CHF_FRA(U_halfDir),
+                   CHF_FRA(frameCellVel), CHF_BOX(thisBox), CHF_REAL(m_dx),
+                   CHF_INT(dir));
+      }
+      
+      // New frame contribution
+      this_uDelU.plus(frame_uDelU);
+    }   // end loop over dataiterator
   }
   else
   {
@@ -2033,6 +2166,52 @@ void AMRLevelMushyLayer::predictVelocities(LevelData<FArrayBox> &a_uDelU,
       const Box &thisBox = levelGrids[dit];
       FArrayBox &this_uDelU = a_uDelU[dit];
       this_uDelU.setVal(0.0);
+      //New for frame velocity
+      // Make a patch-local copy of the advected quantity.
+      FluxBox U_half(thisBox, SpaceDim);
+      for (int dir = 0; dir < SpaceDim; ++dir)
+      {
+        U_half[dir].copy(thisU_chiHalf[dir], 0, 0, SpaceDim);
+      }
+
+      // For porosity-based advection methods, recover U from U/chi.
+      if (m_opt.advectionMethod == m_porosityOutsideAdvection ||
+          m_opt.advectionMethod == m_porosityInAdvection)
+      {
+        for (int velComp = 0; velComp < SpaceDim; velComp++)
+        {
+          for (int dir = 0; dir < SpaceDim; dir++)
+          {
+            FArrayBox &U_halfDir = U_half[dir];
+            FArrayBox &porosityDir = porosityFace[dit][dir];
+
+            U_halfDir.mult(porosityDir, 0, velComp, 1);
+          }
+        }
+      }
+    
+      // Cell-centered frame velocity, constant in the last component.
+      FArrayBox frameCellVel(thisBox, SpaceDim);
+      frameCellVel.setVal(0.0);
+      for (BoxIterator bit(frameCellVel.box()); bit.ok(); ++bit)
+      {
+        IntVect iv = bit();
+        frameCellVel(iv, SpaceDim - 1) = m_parameters.nonDimVel;
+      }
+
+      // Compute frame contribution in a temporary FArrayBox, then add it.
+      FArrayBox frame_uDelU(thisBox, SpaceDim);
+      frame_uDelU.setVal(0.0);
+      
+      for (int dir = 0; dir < SpaceDim; dir++)
+      {
+        FArrayBox &U_halfDir = U_half[dir];
+      
+        FORT_UDELS(CHF_FRA(frame_uDelU), CHF_FRA(U_halfDir),
+                   CHF_FRA(frameCellVel), CHF_BOX(thisBox), CHF_REAL(m_dx),
+                   CHF_INT(dir));
+      }
+      
 
       // to do this in a dimensionality independent way,
       // loop over directions.
@@ -2047,6 +2226,8 @@ void AMRLevelMushyLayer::predictVelocities(LevelData<FArrayBox> &a_uDelU,
                    CHF_INT(dir));
 
       } // end loop over directions
+      // New frame contribution
+      this_uDelU.plus(frame_uDelU);
     }   // end loop over dataiterator
   }     // end if conservative/non conservative calculation
 
@@ -2179,12 +2360,14 @@ void AMRLevelMushyLayer::traceAdvectionVel(
   // time using the patchGodunov infrastructure
   const DisjointBoxLayout &levelGrids = a_advVel.getBoxes();
   DataIterator dit = a_advVel.dataIterator();
+
   for (dit.begin(); dit.ok(); ++dit)
   {
     //    Box gridBox = levelGrids[dit()];
 
     FArrayBox &thisOldVel = a_old_vel[dit()];
     FluxBox &thisAdvVel = a_advVel[dit()];
+    
     FArrayBox &U_chi_old = U_chi[dit];
     const FArrayBox &srcFab = a_viscousSource[dit()];
 
@@ -2196,8 +2379,24 @@ void AMRLevelMushyLayer::traceAdvectionVel(
 
     // set up PatchGodunov and AdvectionPhysics for this patch
     a_patchGodVelocity.setCurrentBox(gridBox);
+
+    //New code
+ 
+    // Add frame velocity directly to the patch-local face velocity.
+    // thisAdvVel already has the correct box/ghost layout for computeWHalf().
+    for (int idir = 0; idir < SpaceDim; ++idir)
+    {
+      thisAdvVel[idir].plus(m_frameAdvVel[dit()][idir]);
+    }
+ 
+     // Use the augmented velocities in the predictor.
+    //advectionPhysics->setCellVelPtr(&oldVelWithFrame);  // u^n + V_frame
     advectionPhysics->setCellVelPtr(&thisOldVel); // u^n
-    advectionPhysics->setAdvVelPtr(&thisAdvVel);  // advection velocity
+    advectionPhysics->setAdvVelPtr(&thisAdvVel);        // adv vel + V_frame
+
+    //Original code******
+    //advectionPhysics->setCellVelPtr(&thisOldVel); // u^n
+    //advectionPhysics->setAdvVelPtr(&thisAdvVel);  // advection velocity
     //      advectionPhysics->setVelocities(&thisOldVel, &thisAdvVel);
 
     // predict face-centered U/chi
@@ -2214,7 +2413,7 @@ void AMRLevelMushyLayer::traceAdvectionVel(
 
       thisAdvVel[idir].copy(U_chi_new[idir], srcComp, destComp, numComp);
     }
-
+    //a_advVel.exchange();//Try it 
     EdgeToCell(a_advVel, *m_vectorNew[VectorVars::m_advectionVel]);
     Real maxAdvU = ::computeNorm(*m_vectorNew[VectorVars::m_advectionVel],
                                  nullptr, 1, m_dx, Interval(0, 0), 0);
@@ -2315,9 +2514,11 @@ void AMRLevelMushyLayer::correctEdgeCentredVelocity(
 
       if (doVelocityAdvection())
       {
+        //LOG_INFO("Before levelMacProject meow");
         exitStatus = m_projection.levelMacProject(
             a_advVel, old_time, a_dt, pressureScalePtr, crsePressureScalePtr,
             pressureScaleEdgePtrOneGhost, crsePressureScaleEdgePtr);
+        //LOG_INFO("After levelMacProject meow");
       }
       else
       {
