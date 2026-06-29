@@ -673,7 +673,7 @@ Real AMRLevelMushyLayer::advance()
   // * skip if we're danger of violating the CFL condition
   if (doAdvectiveSrc)
   {
-    advectLambda(true);
+    advectLambda(true); //New: commenting for test; not the reason for strip-like salinity, but do need adjustment
   }
 
   if (m_opt.includeTracers)
@@ -950,10 +950,33 @@ void AMRLevelMushyLayer::advectLambda(bool doFRupdates)
   m_scalarNew[ScalarVars::m_lambda]->copyTo(
       Interval(0, 0), *m_scalarOld[ScalarVars::m_lambda], Interval(0, 0));
 
+  // New: do need to use total Vel
+    // Build a temporary advection velocity:
+  // advVelTmp = m_advVel + m_someOtherAdvVel
+  LevelData<FluxBox> advVelTmp(m_grids, 1);
+  DataIterator dit = m_grids.dataIterator();
+
+  for (dit.reset(); dit.ok(); ++dit)
+  {
+    advVelTmp[dit].copy(m_advVel[dit]);
+    for (int dir = 0; dir < SpaceDim; ++dir)
+    {
+      // Add component-wise on each face box
+      advVelTmp[dit][dir].plus(m_frameAdvVel[dit][dir]);
+    }
+     // 你要叠加的那个 LevelData<FluxBox>
+  }
+
+  advVelTmp.exchange();
+
   // Want to get the lambda flux back so we can remove it later
   LevelData<FluxBox> lambdaFlux(m_grids, 1);
-  advectScalar(m_lambda, m_lambda, m_advVel, true,
+  // new code
+  advectScalar(m_lambda, m_lambda, advVelTmp, true,
                lambdaFlux); // advect without a diffusive source term
+  //old code
+  //advectScalar(m_lambda, m_lambda, m_advVel, true,
+               //lambdaFlux); // advect without a diffusive source term
 
   setValLevel(*m_vectorNew[VectorVars::m_advVelCorr], 0.0);
 }
