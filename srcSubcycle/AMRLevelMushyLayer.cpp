@@ -972,8 +972,15 @@ void AMRLevelMushyLayer::advectLambda(bool doFRupdates)
   // Want to get the lambda flux back so we can remove it later
   LevelData<FluxBox> lambdaFlux(m_grids, 1);
   // new code
+  m_scalarOld[ScalarVars::m_lambda]->exchange(Interval(0,0));
+
   advectScalar(m_lambda, m_lambda, advVelTmp, true,
                lambdaFlux); // advect without a diffusive source term
+
+  // new code
+  m_scalarNew[ScalarVars::m_lambda]->exchange(Interval(0,0));
+ 
+
   //old code
   //advectScalar(m_lambda, m_lambda, m_advVel, true,
                //lambdaFlux); // advect without a diffusive source term
@@ -1178,7 +1185,7 @@ void AMRLevelMushyLayer::upwind(
         &thisCellVel);                           // set cell-centered velocity field
     advectionPhysics->setAdvVelPtr(&thisAdvVel); // set advection velocity field
     advectionPhysics->setInflowOutflowVelPtr(&thisInflowOutflowVel);
-
+    
     // compute face-centered, predicted scalars
     a_patchGodScalar.computeWHalf(thisEdgeScal, thisOldScal, thisSrc, a_dt,
                                   curBox); // was curBox
@@ -1199,6 +1206,33 @@ void AMRLevelMushyLayer::computeScalarAdvectiveFlux(
   // Predict half time face centered scalar components
   upwind(a_edgeScal, a_old_scal, a_adv_vel, a_inflowOutflowVel, a_old_vel,
          a_diffusiveSrc, a_patchGod, a_old_time, a_dt);
+
+  // new patch for lambda instability
+  //std::cout << "isLambda = " << isLambda << std::endl;
+  if (m_currentScalarVar == ScalarVars::m_lambda)
+  {
+      for (DataIterator dit = m_grids.dataIterator(); dit.ok(); ++dit)
+      {
+          FluxBox& edge = a_edgeScal[dit()];
+  
+          for (int dir = 0; dir < SpaceDim; ++dir)
+          {
+              FArrayBox& faceFab = edge[dir];
+              Box faceBox = faceFab.box();
+  
+              for (BoxIterator bit(faceBox); bit.ok(); ++bit)
+              {
+                  const IntVect& iv = bit();
+  
+                  Real val = faceFab(iv, 0);
+                  if (!std::isfinite(val))
+                  {
+                      faceFab(iv, 0) = 1.0;
+                  }
+              }
+          }
+      }
+  }
 
   DataIterator dit = a_old_vel.dataIterator();
   for (dit.reset(); dit.ok(); ++dit)
@@ -2323,10 +2357,55 @@ void AMRLevelMushyLayer::advectScalar(const int a_scalarVar,
   }
 
   DataIterator dit(m_grids);
+  
+  //newly added code to add flag for lambda
+  m_currentScalarVar = a_scalarVar;
 
   // Get the flux of a_advectionVar, i.e. u*a_advectionVar
   computeScalarAdvectiveFlux(flux, a_advectionVar, -1, a_advVel, m_time - m_dt,
                              m_dt); // -1 means no diffusive src
+  
+  // newly added code to set the flag back                        
+  m_currentScalarVar = -1;
+
+  // need to check flux
+  #include <cmath>   // 如果文件顶部还没有
+  
+  if (a_scalarVar == ScalarVars::m_lambda)
+  {
+    for (DataIterator dit = flux.dataIterator(); dit.ok(); ++dit)
+    {
+        for (int dir = 0; dir < SpaceDim; dir++)
+        {
+            FArrayBox& fab = flux[dit][dir];
+            Box box = fab.box();
+
+            for (BoxIterator bit(box); bit.ok(); ++bit)
+            {
+                const IntVect& iv = bit();
+
+                double val = fab(iv,0);
+
+                if (std::isnan(val))
+                {
+                    std::cout << "NAN IN FLUX!"
+                              << " patch=" << dit().intCode()
+                              << " dir=" << dir
+                              << " iv=("
+                              << iv[0] << ","
+                              << iv[1]
+#if CH_SPACEDIM==3
+                              << "," << iv[2]
+#endif
+                              << ")"
+                              << std::endl;
+
+                    MayDay::Error("NaN found in lambda flux");
+                }
+            }
+        }
+    }
+  }           
 
   // Make the source term, div(u*a_advectionVar)
   LevelData<FArrayBox> update(m_grids, 1);
