@@ -1441,6 +1441,9 @@ protected:
   /// Whether to do sanity checks
   bool m_doSanityChecks;
 
+  /// Current scalar being advected (-1 means none)
+  int m_currentScalarVar;
+
 private:
 
   // Ensure field is great than min val
