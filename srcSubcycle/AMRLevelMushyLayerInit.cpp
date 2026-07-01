@@ -91,6 +91,9 @@ void AMRLevelMushyLayer::define(AMRLevel *a_coarserLevelPtr,
   m_numGhost = 1;
   m_numGhostAdvection = 4;
 
+  // newly added flag for check whether we are dealing with lambda
+  m_currentScalarVar = -1;
+
   // Currently just one element in this vector, fluid velocity
   m_vectRestartVars = Vector<int>(1, 0);
   m_vectRestartVars[0] = VectorVars::m_fluidVel;
