@@ -953,7 +953,8 @@ void AMRLevelMushyLayer::advectLambda(bool doFRupdates)
   // New: do need to use total Vel
     // Build a temporary advection velocity:
   // advVelTmp = m_advVel + m_someOtherAdvVel
-  LevelData<FluxBox> advVelTmp(m_grids, 1);
+  // maybe need specified ghost
+  LevelData<FluxBox> advVelTmp(m_grids, 1, m_numGhostAdvection * IntVect::Unit);
   DataIterator dit = m_grids.dataIterator();
 
   for (dit.reset(); dit.ok(); ++dit)
@@ -1227,7 +1228,8 @@ void AMRLevelMushyLayer::computeScalarAdvectiveFlux(
                   Real val = faceFab(iv, 0);
                   if (!std::isfinite(val))
                   {
-                      faceFab(iv, 0) = 1.0;
+                      //faceFab(iv, 0) = 1.0;
+                      std::cout << "Warning: Inf lambda" << std::endl;
                   }
               }
           }
