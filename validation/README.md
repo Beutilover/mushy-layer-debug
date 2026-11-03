@@ -38,10 +38,9 @@ This correspondence allows the moving-frame momentum implementation to be tested
 The steady background temperature satisfies
 
 $$
-\frac{d^2\theta_0}{dz^2}
--
-V\frac{d\theta_0}{dz}=0,
+\frac{d^2\theta_0}{dz^2} - V\frac{d\theta_0}{dz} = 0,
 $$
+
 
 with $\theta_0(0)=\theta_d$ and $\theta_0(1)=\theta_u$.
 
