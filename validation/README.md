@@ -1,3 +1,4 @@
+
 # Verification of the Moving-Frame Momentum Solver
 
 ## 1. Overview
@@ -10,21 +11,21 @@ The primary verification is based on comparing the spatial structure of the domi
 
 ## 2. Benchmark formulation
 
-Consider a fluid layer occupying \(0 \leq z \leq 1\), with a uniform imposed vertical throughflow \(V\) and fixed temperatures \(\theta_d\) and \(\theta_u\) at the lower and upper boundaries.
+Consider a fluid layer occupying $0 \leq z \leq 1$, with a uniform imposed vertical throughflow $V$ and fixed temperatures $\theta_d$ and $\theta_u$ at the lower and upper boundaries.
 
-The fluid velocity at both boundaries is prescribed as \(V\mathbf e_z\). Defining the relative velocity by
+The fluid velocity at both boundaries is prescribed as $V\mathbf e_z$. Defining the relative velocity by
 
-\[
+$$
 \mathbf u=\mathbf v-V\mathbf e_z
-\]
+$$
 
-gives homogeneous Dirichlet conditions for \(\mathbf u\).
+gives homogeneous Dirichlet conditions for $\mathbf u$.
 
 The momentum equation for the relative velocity contains the background advection contribution
 
-\[
+$$
 V\frac{\partial\mathbf u}{\partial z},
-\]
+$$
 
 in addition to the usual nonlinear advection.
 
@@ -36,20 +37,20 @@ This correspondence allows the moving-frame momentum implementation to be tested
 
 The steady background temperature satisfies
 
-\[
+$$
 \frac{d^2\theta_0}{dz^2}
 -
 V\frac{d\theta_0}{dz}=0,
-\]
+$$
 
-with \(\theta_0(0)=\theta_d\) and \(\theta_0(1)=\theta_u\).
+with $\theta_0(0)=\theta_d$ and $\theta_0(1)=\theta_u$.
 
 The resulting profile is
 
-\[
+$$
 \theta_0(z)=
 \frac{e^V\theta_d-\theta_u-(\theta_d-\theta_u)e^{Vz}}{e^V-1}.
-\]
+$$
 
 Unlike classical Rayleigh–Bénard convection, the background temperature is nonlinear in height because of the imposed throughflow.
 
@@ -61,9 +62,9 @@ The temperature perturbation is expanded in sine functions, while the vertical-v
 
 The resulting discretised equations take the form
 
-\[
+$$
 L\frac{d\mathbf q}{dt}=R\mathbf q.
-\]
+$$
 
 The dominant eigenvalue determines the theoretical linear growth rate, while its associated eigenvector provides the predicted temperature and vertical-velocity perturbation profiles.
 
@@ -73,11 +74,11 @@ The MATLAB implementation is independent of SOFTBALL's finite-volume discretisat
 
 | Parameter | Value |
 |---|---|
-| Rayleigh number, \(Ra\) | 21000 |
-| Prandtl number, \(Pr\) | 1 |
-| Imposed throughflow, \(V\) | 10 |
-| Lower temperature, \(\theta_d\) | 2.1 |
-| Upper temperature, \(\theta_u\) | 1.1 |
+| Rayleigh number, $Ra$ | 21000 |
+| Prandtl number, $Pr$ | 1 |
+| Imposed throughflow, $V$ | 10 |
+| Lower temperature, $\theta_d$ | 2.1 |
+| Upper temperature, $\theta_u$ | 1.1 |
 | Horizontal wavenumber | 4.86 |
 | Galerkin truncation | 512 modes |
 | SOFTBALL resolution | 664 × 256 |
@@ -107,9 +108,9 @@ The results are:
 
 | Quantity | Growth rate |
 |---|---:|
-| Fourier–Galerkin LSA | 0.9069 |
-| SOFTBALL — temperature | 1.0798 |
-| SOFTBALL — vertical velocity | 1.0780 |
+| Fourier–Galerkin LSA | 0.906910 |
+| SOFTBALL — temperature | 1.079805 |
+| SOFTBALL — vertical velocity | 1.078003 |
 
 The SOFTBALL growth rates differ from the LSA prediction by approximately 0.17 in absolute terms, corresponding to a relative difference of about 19%. Both approaches predict an unstable mode with a positive growth rate of order unity.
 
@@ -123,7 +124,7 @@ The close agreement between the eigenmode profiles obtained from the independent
 
 The benchmark is particularly relevant to the momentum correction because the imposed throughflow produces a non-trivial background temperature distribution and introduces additional momentum advection.
 
-The present test is restricted to the single-phase limit, \(\chi=1\). Consequently, the additional terms involving spatial gradients of porosity are not independently tested here.
+The present test is restricted to the single-phase limit, $\chi=1$. Consequently, the additional terms involving spatial gradients of porosity are not independently tested here.
 
 The results provide targeted verification of the moving-frame momentum formulation, rather than comprehensive verification of all numerical schemes and physical processes implemented in SOFTBALL.
 
